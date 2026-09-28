@@ -249,7 +249,8 @@ if arquivo_carregado:
                     df = pd.DataFrame(registros)
                     st.dataframe(df, use_container_width=True)
                     
-                    csv_data = df.to_csv(index=False, sep=';').encode('utf-8-sig')
+                    # Gera o arquivo CSV sem o cabeçalho das colunas (header=False)
+                    csv_data = df.to_csv(index=False, header=False, sep=';').encode('utf-8-sig')
                     st.download_button(
                         label="📥 Descarregar CSV Contábil",
                         data=csv_data,
