@@ -3,11 +3,11 @@ import re
 import io
 import pandas as pd
 import streamlit as st
-from pypdf import PdfReader  # Nova biblioteca para ler o PDF diretamente
+import pdfplumber  # Engine de extração para PDFs escaneados/imagem
 
 # Configuração da página do Streamlit
 st.set_page_config(
-    page_title="Conversor Contábil Inteligente",
+    page_title="Conversor Contábil Multi-Meses",
     page_icon="📊",
     layout="wide"
 )
@@ -147,12 +147,12 @@ arquivo_carregado = st.file_uploader(
 if arquivo_carregado:
     linhas = []
     try:
-        # Lê o PDF diretamente da memória do Streamlit
-        leitor_pdf = PdfReader(arquivo_carregado)
-        for pagina in leitor_pdf.pages:
-            texto_pagina = pagina.extract_text()
-            if texto_pagina:
-                linhas.extend(texto_pagina.split('\n'))
+        # Abre o PDF usando pdfplumber para forçar a leitura visual de documentos escaneados
+        with pdfplumber.open(arquivo_carregado) as pdf:
+            for pagina in pdf.pages:
+                texto_pagina = pagina.extract_text()
+                if texto_pagina:
+                    linhas.extend(texto_pagina.split('\n'))
     except Exception as e:
         st.error(f"Erro ao ler o arquivo PDF. Certifique-se de que não está corrompido.")
         st.stop()
@@ -209,4 +209,4 @@ if arquivo_carregado:
         else:
             st.info(f"Nenhum lançamento encontrado para o período {periodo_escolhido}.")
     else:
-        st.error("Não conseguimos ler texto dentro deste PDF. Se ele for um PDF escaneado (imagem pura), você precisará rodar um OCR nele antes, ou podemos integrar um leitor de imagem (OCR) diretamente neste script.")
+        st.error("Não conseguimos extrair texto deste PDF. Verifique se o arquivo possui camadas de texto válidas identificadas pelo scanner.")
