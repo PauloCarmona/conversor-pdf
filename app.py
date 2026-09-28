@@ -27,7 +27,7 @@ def pre_analisar_meses(linhas):
     padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
     
     for linha in linhas:
-        linha_limpa = linha.strip().replace('|', ' ') # Remove barras de tabelas TXT
+        linha_limpa = linha.strip().replace('|', ' ')
         match = re.search(padrao_data, linha_limpa)
         if match:
             if "SALDO DIA" in linha_limpa or "SALDO ANTERIOR" in linha_limpa:
@@ -36,13 +36,12 @@ def pre_analisar_meses(linhas):
             ano = int(match.group(3))
             meses_encontrados.add((mes, ano))
             
-    return sorted(list(meses_encontrados), key=lambda x: (x[1], x[0]))
+    return sorted(list(meses_encontrados), key=lambda x: (x, x))
 
 def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, mes_filtro, ano_filtro, regras_mapeamento):
     """
     Processa as linhas aplicando as regras contábeis, filtros de mês e mapeamento de subcontas.
     """
-    # Remove as barras verticais de formatação de tabelas TXT para não quebrar o split
     linha_limpa = linha.strip().replace('|', ' ')
     padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
     match_data = re.search(padrao_data, linha_limpa)
@@ -67,7 +66,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     tipo = None
     valor_str = ""
     
-    # Identifica indicador D ou C na linha varrendo as colunas de trás para frente
+    # Identifica indicador D ou C na linha varrendo as colunas
     for i, parte in enumerate(partes):
         partes_clean = parte.strip().upper()
         if partes_clean in ['D', 'C']:
@@ -195,7 +194,7 @@ arquivo_carregado = st.file_uploader(
 
 if arquivo_carregado:
     linhas = []
-    nome_extensao = os.path.splitext(arquivo_carregado.name)[1].lower()
+    nome_extensao = os.path.splitext(arquivo_carregado.name).lower()
     
     try:
         if nome_extensao == ".pdf":
@@ -224,25 +223,25 @@ if arquivo_carregado:
     periodos_disponiveis = pre_analisar_meses(linhas)
     
     if periodos_disponiveis:
-        # CORREÇÃO DO ERRO: Acessa o índice da tupla corretamente p[0] para o mês e p[1] para o ano
         opcoes_selecao = [f"{MESES_NOME[p[0]]} de {p[1]}" for p in periodos_disponiveis]
         
         if len(periodos_disponiveis) > 1:
             st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** no extrato!")
         
-        periodo_escolhido = st.selectbox(
-            "📅 Qual mês você deseja converter e exportar agora?",
-            options=opcoes_selecao
-        )
-        
-        index_escolhido = opcoes_selecao.index(periodo_escolhido)
-        mes_filtro, ano_filtro = periodos_disponiveis[index_escolhido]
-        
-        chave_execucao = f"{arquivo_carregado.name}|{periodo_escolhido}"
+        # USO DE FORMULÁRIO DO STREAMLIT: Previne que o script apague as variáveis calculadas
+        with st.form("form_conversao"):
+            periodo_escolhido = st.selectbox(
+                "📅 Qual mês você deseja converter e exportar agora?",
+                options=opcoes_selecao
+            )
+            
+            submit_conversao = st.form_submit_button("▶️ Executar conversão", type="primary")
 
-        executar = st.button("▶️ Executar conversão", key="btn_executar", type="primary")
-
-        if executar:
+        if submit_conversao:
+            index_escolhido = opcoes_selecao.index(periodo_escolhido)
+            mes_filtro, ano_filtro = periodos_disponiveis[index_escolhido]
+            chave_execucao = f"{arquivo_carregado.name}|{periodo_escolhido}"
+            
             registros = []
             for linha in linhas:
                 res = processar_linha_caixa(
@@ -254,6 +253,7 @@ if arquivo_carregado:
 
             if registros:
                 df = pd.DataFrame(registros)
-                df = df.iloc[::-1].reset_index(drop=True)  # Ordem cronológica crescente
+                # Mantém ordem cronológica crescente
+                df = df.iloc[::-1].reset_index(drop=True)
 
                 df['data'] = df['data'].astype(str)
