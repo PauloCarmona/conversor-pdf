@@ -1,13 +1,11 @@
 import os
 import re
-import io
 import pandas as pd
 import streamlit as st
-import pdfplumber  # Engine de extração local para PDFs
 
 # Configuração da página do Streamlit
 st.set_page_config(
-    page_title="Conversor Contábil Multi-Formato com Subcontas",
+    page_title="Conversor Contábil TXT com Subcontas",
     page_icon="📊",
     layout="wide"
 )
@@ -36,11 +34,12 @@ def pre_analisar_meses(linhas):
             ano = int(match.group(3))
             meses_encontrados.add((mes, ano))
             
-    return sorted(list(meses_encontrados), key=lambda x: (x, x))
+    return sorted(list(meses_encontrados), key=lambda x: (x[1], x[0]))
 
 def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, mes_filtro, ano_filtro, regras_mapeamento):
     """
     Processa as linhas aplicando as regras contábeis, filtros de mês e mapeamento de subcontas.
+    Ignora lançamentos sem valor definido ou com valor igual a zero.
     """
     linha_limpa = linha.strip().replace('|', ' ')
     padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
@@ -83,12 +82,17 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
             valor_str = partes_clean[:-1]
             break
 
+    # Se o tipo ou valor não forem informados, passa para a próxima linha
     if not tipo or not valor_str:
         return None
 
     try:
         valor_limpo = valor_str.replace('.', '').replace(',', '.')
         valor_float = float(valor_limpo)
+        
+        # Ignora lançamentos com valor zerado
+        if valor_float == 0:
+            return None
     except ValueError:
         return None
 
@@ -100,7 +104,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
             break
 
     sub_hora = r'\b\d{2}:\d{2}(:\d{2})?\b'
-    elementos_remover = [partes_linha, doc, valor_str, tipo, 'D', 'C', '-', '–']
+    elementos_remover = [doc, valor_str, tipo, 'D', 'C', '-', '–']
     
     palavras_desc = []
     for p in partes_linha:
@@ -134,17 +138,18 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     valor_com_virgula = f"{valor_float:.2f}".replace('.', ',')
     data_formatada = f"{dia_final}/{mes_linha:02d}/{ano_linha}"
 
+    # Retorna o layout para o ERP Domínio Web
     return {
         'data': data_formatada,
-        'conta debito': conta_debito,
+        'conta débito': conta_debito,
         'conta crédito': conta_credito,
         'valor': valor_com_virgula,
         'descrição': descricao_final
     }
 
 # --- PAINEL VISUAL STREAMLIT ---
-st.title("📊 Conversor Contábil Multi-Formato (PDF, Excel, TXT)")
-st.markdown("Arraste extratos bancários em formato **PDF, Excel (.xlsx, .xls) ou Bloco de Notas (.txt)** para processamento contábil local.")
+st.title("📊 Conversor Contábil TXT")
+st.markdown("Arraste extratos bancários em formato **Bloco de Notas (.txt)** para processamento contábil local.")
 
 # 1. Configuração Fixa do Plano de Contas Padrão na Sidebar
 st.sidebar.header("⚙️ Contas Padrão")
@@ -187,10 +192,10 @@ if st.session_state.mapeamento:
 
 st.markdown("---")
 
-# Seletor de Arquivo Único
+# Seletor de Arquivo TXT Único
 arquivo_carregado = st.file_uploader(
-    "Selecione um arquivo de extrato para analisar", 
-    type=["pdf", "xlsx", "xls", "txt"],
+    "Selecione um arquivo TXT de extrato para analisar", 
+    type=["txt"],
     accept_multiple_files=False
 )
 
@@ -198,36 +203,18 @@ if not arquivo_carregado and "resultado" in st.session_state:
     del st.session_state.resultado
 
 if arquivo_carregado:
-    # Garante o manuseio correto do objeto retornado pelo st.file_uploader
+    # Trata caso o Streamlit devolva o arquivo dentro de uma lista
     if isinstance(arquivo_carregado, list):
-        arquivo_carregado = arquivo_carregado[0] if arquivo_carregado else None
+        arquivo_carregado = arquivo_carregado[0] if len(arquivo_carregado) > 0 else None
 
-    if arquivo_carregado and hasattr(arquivo_carregado, "name"):
+    if arquivo_carregado:
         linhas = []
-        extensao_arquivo = os.path.splitext(arquivo_carregado.name).lower()
         
         try:
-            if extensao_arquivo == ".pdf":
-                with pdfplumber.open(arquivo_carregado) as pdf:
-                    for pagina in pdf.pages:
-                        texto_pagina = pagina.extract_text()
-                        if texto_pagina:
-                            linhas.extend(texto_pagina.split('\n'))
-                            
-            elif extensao_arquivo in [".xlsx", ".xls"]:
-                df_excel = pd.read_excel(arquivo_carregado, header=None)
-                df_excel = df_excel.fillna("")
-                for index, row in df_excel.iterrows():
-                    linha_texto = " ".join([str(val).strip() for val in row.values if str(val).strip()])
-                    if linha_texto:
-                        linhas.append(linha_texto)
-                        
-            elif extensao_arquivo == ".txt":
-                string_data = arquivo_carregado.read().decode("utf-8", errors="ignore")
-                linhas = string_data.split('\n')
-                
+            string_data = arquivo_carregado.read().decode("utf-8", errors="ignore")
+            linhas = string_data.split('\n')
         except Exception as e:
-            st.error(f"Erro ao decodificar a estrutura do arquivo {arquivo_carregado.name}: {e}")
+            st.error(f"Erro ao ler o arquivo TXT: {e}")
             st.stop()
         
         periodos_disponiveis = pre_analisar_meses(linhas)
