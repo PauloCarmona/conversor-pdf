@@ -110,9 +110,13 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     descricao_final = f"{texto_complementar} (Doc: {doc})"
 
     # --- MAPEAMENTO DE SUBCONTAS POR PALAVRA-CHAVE ---
+    # A conta banco nunca é alterada: regra que aponte para ela é ignorada e, sem outra
+    # regra aplicável, vale a transitória padrão (Fornecedor se D, Cliente se C).
     conta_mapeada = None
     for palavra, conta in regras_mapeamento.items():
         if palavra.upper() in descricao_final.upper():
+            if str(conta).strip() == str(conta_banco).strip():
+                continue
             conta_mapeada = conta
             break
 
@@ -150,9 +154,10 @@ cont_cliente = st.sidebar.text_input("Transitória Cliente (Padrão C):", value=
 st.markdown("### 🔍 Mapeamento Dinâmico de Subcontas")
 st.write("Adicione palavras-chave encontradas na descrição do extrato para amarrar automaticamente a contas específicas (Ex: tarifas, concessionárias, impostos):")
 
-# Inicializa o estado das regras de mapeamento na sessão do Streamlit
+# Inicializa o estado das regras de mapeamento na sessão do Streamlit.
+# As regras vivem só na sessão (não são gravadas em disco) e começam vazias a cada abertura do sistema.
 if 'mapeamento' not in st.session_state:
-    st.session_state.mapeamento = {"IOF": "55", "JUROS": "56", "COELBA": "110", "CESTA SERVICO": "200"}
+    st.session_state.mapeamento = {}
 
 col_palavra, col_conta, col_btn = st.columns(3)
 with col_palavra:
@@ -163,8 +168,14 @@ with col_btn:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("➕ Adicionar Regra", key="add_regra", use_container_width=True):
         if nova_palavra and nova_conta:
-            st.session_state.mapeamento[nova_palavra.strip()] = nova_conta.strip()
-            st.rerun()
+            if nova_conta.strip() == cont_banco.strip():
+                st.error(
+                    "A conta banco não pode ser usada em regras de subcontas. "
+                    "Débitos usam a transitória de fornecedores e créditos a de clientes por padrão."
+                )
+            else:
+                st.session_state.mapeamento[nova_palavra.strip()] = nova_conta.strip()
+                st.rerun()
 
 # Exibe as regras atualmente cadastradas em formato de tags administráveis
 if st.session_state.mapeamento:
@@ -215,44 +226,64 @@ if arquivo_carregado:
         index_escolhido = opcoes_selecao.index(periodo_escolhido)
         mes_filtro, ano_filtro = periodos_disponiveis[index_escolhido]
         
-        # Envia as regras salvas em sessão para dentro do tratador de linhas
-        registros = []
-        for linha in linhas:
-            res = processar_linha_caixa(
-                linha.strip(), cont_banco, cont_fornecedor, cont_cliente, 
-                mes_filtro, ano_filtro, st.session_state.mapeamento
-            )
-            if res:
-                registros.append(res)
-                
-        if registros:
-            df = pd.DataFrame(registros)
-            df = df.iloc[::-1].reset_index(drop=True) # Mantém ordem cronológica crescente
-            
-            df['data'] = df['data'].astype(str)
-            df['conta debito'] = df['conta debito'].astype(str)
-            df['conta crédito'] = df['conta crédito'].astype(str)
-            
-            colunas_ordenadas = ['data', 'conta debito', 'conta crédito', 'valor', 'descrição']
-            df = df[colunas_ordenadas]
-            
-            st.markdown(f"### 👀 Prévia da Importação Contábil - Período: `{periodo_escolhido}`")
-            st.dataframe(df, use_container_width=True)
-            
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False)
-            dados_excel = output.getvalue()
-            
-            nome_saida = f"{os.path.splitext(arquivo_carregado.name)[0]}_{periodo_escolhido.replace(' ', '_')}.xlsx"
-            st.download_button(
-                label=f"📥 Baixar Planilha Pronta para o ERP ({periodo_escolhido})",
-                data=dados_excel,
-                file_name=nome_saida,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        # Identifica a combinação arquivo + período para saber se o resultado em memória ainda vale
+        chave_execucao = f"{arquivo_carregado.name}|{periodo_escolhido}"
+
+        # Botão de execução: o processamento só acontece após o clique
+        executar = st.button("▶️ Executar conversão", key="btn_executar", type="primary")
+
+        if executar:
+            # Envia as regras salvas em sessão para dentro do tratador de linhas
+            registros = []
+            for linha in linhas:
+                res = processar_linha_caixa(
+                    linha.strip(), cont_banco, cont_fornecedor, cont_cliente,
+                    mes_filtro, ano_filtro, st.session_state.mapeamento
+                )
+                if res:
+                    registros.append(res)
+
+            if registros:
+                df = pd.DataFrame(registros)
+                df = df.iloc[::-1].reset_index(drop=True)  # Mantém ordem cronológica crescente
+
+                df['data'] = df['data'].astype(str)
+                df['conta debito'] = df['conta debito'].astype(str)
+                df['conta crédito'] = df['conta crédito'].astype(str)
+
+                colunas_ordenadas = ['data', 'conta debito', 'conta crédito', 'valor', 'descrição']
+                df = df[colunas_ordenadas]
+
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False)
+
+                st.session_state.resultado = {
+                    "chave": chave_execucao,
+                    "df": df,
+                    "excel": output.getvalue(),
+                }
+            else:
+                st.session_state.resultado = {"chave": chave_execucao, "df": None, "excel": None}
+
+        # Exibe o resultado guardado (persiste após clicar em Baixar, que reexecuta o script)
+        resultado = st.session_state.get("resultado")
+        if resultado and resultado["chave"] == chave_execucao:
+            if resultado["df"] is not None:
+                st.markdown(f"### 👀 Prévia da Importação Contábil - Período: `{periodo_escolhido}`")
+                st.dataframe(resultado["df"], use_container_width=True)
+
+                nome_saida = f"{os.path.splitext(arquivo_carregado.name)[0]}_{periodo_escolhido.replace(' ', '_')}.xlsx"
+                st.download_button(
+                    label=f"📥 Baixar Planilha Pronta para o ERP ({periodo_escolhido})",
+                    data=resultado["excel"],
+                    file_name=nome_saida,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.info("Nenhum lançamento contábil localizado para o período selecionado.")
         else:
-            st.info("Nenhum lançamento contábil localizado para o período selecionado.")
+            st.caption("Escolha o mês e clique em **Executar conversão** para gerar a prévia e a planilha.")
     else:
         st.warning(
             "Nenhuma data de lançamento foi encontrada no PDF. "
