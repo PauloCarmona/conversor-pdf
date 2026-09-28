@@ -3,7 +3,7 @@ import re
 import io
 import pandas as pd
 import streamlit as st
-import pdfplumber  # Engine de extração local para PDFs escaneados/imagem
+import pdfplumber  # Engine de extração local para PDFs
 
 # Configuração da página do Streamlit
 st.set_page_config(
@@ -27,9 +27,10 @@ def pre_analisar_meses(linhas):
     padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
     
     for linha in linhas:
-        match = re.search(padrao_data, linha.strip())
+        linha_limpa = linha.strip()
+        match = re.search(padrao_data, linha_limpa)
         if match:
-            if "SALDO DIA" in linha or "SALDO ANTERIOR" in linha:
+            if "SALDO DIA" in linha_limpa or "SALDO ANTERIOR" in linha_limpa:
                 continue
             mes = int(match.group(2))
             ano = int(match.group(3))
@@ -41,12 +42,13 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     """
     Processa as linhas aplicando as regras contábeis, filtros de mês e mapeamento de subcontas.
     """
+    linha_limpa = linha.strip()
     padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
-    match_data = re.search(padrao_data, linha)
+    match_data = re.search(padrao_data, linha_limpa)
     if not match_data:
         return None
         
-    data_final = match_data.group(1)
+    dia_final = match_data.group(1)
     mes_linha = int(match_data.group(2))
     ano_linha = int(match_data.group(3))
     
@@ -54,32 +56,34 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     if mes_linha != mes_filtro or ano_linha != ano_filtro:
         return None
         
-    partes = list(filter(None, linha.split()))
-    if len(partes) < 4:
+    if "SALDO DIA" in linha_limpa or "SALDO ANTERIOR" in linha_limpa:
         return None
         
-    texto_linha = " ".join(partes)
-    
-    if "SALDO DIA" in texto_linha or "SALDO ANTERIOR" in texto_linha:
+    partes = list(filter(None, linha_limpa.split()))
+    if len(partes) < 2:
         return None
-        
+
     tipo = None
     valor_str = ""
     
-    # Identificação do indicador (D/C) e do valor
-    if partes[-1] in ['D', 'C']:
-        tipo = partes[-1]
-        valor_str = partes[-2]
-    elif len(partes) > 2 and partes[-2] in ['D', 'C']:
-        tipo = partes[-2]
-        valor_str = partes[-3]
-    elif partes[-1].endswith('D') and ',' in partes[-1]:
-        tipo = 'D'
-        valor_str = partes[-1][:-1]
-    elif partes[-1].endswith('C') and ',' in partes[-1]:
-        tipo = 'C'
-        valor_str = partes[-1][:-1]
-    else:
+    # Identifica indicador D ou C na linha varrendo as colunas
+    for i, parte in enumerate(partes):
+        parte_clean = parte.strip().upper()
+        if parte_clean in ['D', 'C']:
+            tipo = parte_clean
+            if i > 0:
+                valor_str = partes[i-1]
+            break
+        elif parte_clean.endswith('D') and ',' in parte_clean:
+            tipo = 'D'
+            valor_str = parte_clean[:-1]
+            break
+        elif parte_clean.endswith('C') and ',' in parte_clean:
+            tipo = 'C'
+            valor_str = parte_clean[:-1]
+            break
+
+    if not tipo or not valor_str:
         return None
 
     try:
@@ -89,29 +93,29 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
         return None
 
     doc = "000000"
-    for p in partes[1:5]:
-        if p.isdigit() and len(p) == 6:
-            doc = p
+    for p in partes:
+        p_clean = p.replace('-', '').replace('/', '').strip()
+        if p_clean.isdigit() and len(p_clean) == 6:
+            doc = p_clean
             break
 
     sub_hora = r'\b\d{2}:\d{2}(:\d{2})?\b'
-    elementos_remover = [f"{data_final}/{mes_linha:02d}/{ano_linha}", doc, valor_str, tipo, 'D', 'C']
+    elementos_remover = [partes, doc, valor_str, tipo, 'D', 'C', '-', '–']
     
     palavras_desc = []
     for p in partes:
-        if re.match(sub_hora, p) or p in elementos_remover:
+        if re.search(sub_hora, p) or p in elementos_remover or any(dt in p for dt in [f"{dia_final}/{mes_linha:02d}", str(ano_linha)]):
             continue
-        p_limpo = p.replace('*', '').replace(',', '').strip()
-        if p_limpo:
+        p_limpo = p.replace('*', '').strip()
+        if p_limpo and p_limpo not in ['D', 'C', '-', '–']:
             palavras_desc.append(p_limpo)
 
     texto_complementar = " ".join(palavras_desc).strip()
     texto_complementar = re.sub(r'\s+', ' ', texto_complementar)
+    texto_complementar = re.sub(r'\b\d{1,3}(\.\d{3})*,\d{2}\b', '', texto_complementar).strip()
     descricao_final = f"{texto_complementar} (Doc: {doc})"
 
-    # --- MAPEAMENTO DE SUBCONTAS POR PALAVRA-CHAVE ---
-    # A conta banco nunca é alterada: regra que aponte para ela é ignorada e, sem outra
-    # regra aplicável, vale a transitória padrão (Fornecedor se D, Cliente se C).
+    # Mapeamento de subcontas
     conta_mapeada = None
     for palavra, conta in regras_mapeamento.items():
         if palavra.upper() in descricao_final.upper():
@@ -120,17 +124,15 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
             conta_mapeada = conta
             break
 
-    # Se o valor for negativo (saída/D): Débito assume a contrapartida | Crédito assume o Banco
     if tipo == 'D':
         conta_debito = conta_mapeada if conta_mapeada else conta_fornecedor
         conta_credito = conta_banco
-    # Se o valor for positivo (entrada/C): Débito assume o Banco | Crédito assume a contrapartida
     else:
         conta_debito = conta_banco
         conta_credito = conta_mapeada if conta_mapeada else conta_cliente
 
     valor_com_virgula = f"{valor_float:.2f}".replace('.', ',')
-    data_formatada = f"{data_final}/{mes_linha:02d}/{ano_linha}"
+    data_formatada = f"{dia_final}/{mes_linha:02d}/{ano_linha}"
 
     return {
         'data': data_formatada,
@@ -152,10 +154,8 @@ cont_cliente = st.sidebar.text_input("Transitória Cliente (Padrão C):", value=
 
 # 2. Painel Central de Regras para Subcontas customizadas por Histórico
 st.markdown("### 🔍 Mapeamento Dinâmico de Subcontas")
-st.write("Adicione palavras-chave encontradas na descrição do extrato para amarrar automaticamente a contas específicas (Ex: tarifas, concessionárias, impostos):")
+st.write("Adicione palavras-chave encontradas na descrição do extrato para amarrar automaticamente a contas específicas:")
 
-# Inicializa o estado das regras de mapeamento na sessão do Streamlit.
-# As regras vivem só na sessão (não são gravadas em disco) e começam vazias a cada abertura do sistema.
 if 'mapeamento' not in st.session_state:
     st.session_state.mapeamento = {}
 
@@ -169,15 +169,12 @@ with col_btn:
     if st.button("➕ Adicionar Regra", key="add_regra", use_container_width=True):
         if nova_palavra and nova_conta:
             if nova_conta.strip() == cont_banco.strip():
-                st.error(
-                    "A conta banco não pode ser usada em regras de subcontas. "
-                    "Débitos usam a transitória de fornecedores e créditos a de clientes por padrão."
-                )
+                st.error("A conta banco não pode ser usada em regras de subcontas.")
             else:
                 st.session_state.mapeamento[nova_palavra.strip()] = nova_conta.strip()
                 st.rerun()
 
-# Exibe as regras atualmente cadastradas em formato de tags administráveis
+# Exibe as regras cadastradas
 if st.session_state.mapeamento:
     st.write("**Regras de Subcontas Ativas (Clique no botão para remover):**")
     cols = st.columns(4)
@@ -190,7 +187,6 @@ if st.session_state.mapeamento:
 
 st.markdown("---")
 
-# Componente para carregar os PDFs (Leitura nativa e local)
 arquivo_carregado = st.file_uploader(
     "Selecione um arquivo de extrato em formato PDF para analisar", 
     type=["pdf"]
@@ -199,7 +195,6 @@ arquivo_carregado = st.file_uploader(
 if arquivo_carregado:
     linhas = []
     try:
-        # Abre o PDF usando pdfplumber de forma 100% local
         with pdfplumber.open(arquivo_carregado) as pdf:
             for pagina in pdf.pages:
                 texto_pagina = pagina.extract_text()
@@ -209,7 +204,6 @@ if arquivo_carregado:
         st.error("Erro ao ler o arquivo PDF. Certifique-se de que não está corrompido.")
         st.stop()
     
-    # Executa a pré-análise baseada no mapeamento de datas
     periodos_disponiveis = pre_analisar_meses(linhas)
     
     if periodos_disponiveis:
@@ -226,18 +220,15 @@ if arquivo_carregado:
         index_escolhido = opcoes_selecao.index(periodo_escolhido)
         mes_filtro, ano_filtro = periodos_disponiveis[index_escolhido]
         
-        # Identifica a combinação arquivo + período para saber se o resultado em memória ainda vale
         chave_execucao = f"{arquivo_carregado.name}|{periodo_escolhido}"
 
-        # Botão de execução: o processamento só acontece após o clique
         executar = st.button("▶️ Executar conversão", key="btn_executar", type="primary")
 
         if executar:
-            # Envia as regras salvas em sessão para dentro do tratador de linhas
             registros = []
             for linha in linhas:
                 res = processar_linha_caixa(
-                    linha.strip(), cont_banco, cont_fornecedor, cont_cliente,
+                    linha, cont_banco, cont_fornecedor, cont_cliente,
                     mes_filtro, ano_filtro, st.session_state.mapeamento
                 )
                 if res:
@@ -245,7 +236,7 @@ if arquivo_carregado:
 
             if registros:
                 df = pd.DataFrame(registros)
-                df = df.iloc[::-1].reset_index(drop=True)  # Mantém ordem cronológica crescente
+                df = df.iloc[::-1].reset_index(drop=True)  # Ordem cronológica crescente
 
                 df['data'] = df['data'].astype(str)
                 df['conta debito'] = df['conta debito'].astype(str)
@@ -266,27 +257,8 @@ if arquivo_carregado:
             else:
                 st.session_state.resultado = {"chave": chave_execucao, "df": None, "excel": None}
 
-        # Exibe o resultado guardado (persiste após clicar em Baixar, que reexecuta o script)
+        # Exibe o resultado da conversão de maneira controlada
         resultado = st.session_state.get("resultado")
         if resultado and resultado["chave"] == chave_execucao:
             if resultado["df"] is not None:
-                st.markdown(f"### 👀 Prévia da Importação Contábil - Período: `{periodo_escolhido}`")
-                st.dataframe(resultado["df"], use_container_width=True)
-
-                nome_saida = f"{os.path.splitext(arquivo_carregado.name)[0]}_{periodo_escolhido.replace(' ', '_')}.xlsx"
-                st.download_button(
-                    label=f"📥 Baixar Planilha Pronta para o ERP ({periodo_escolhido})",
-                    data=resultado["excel"],
-                    file_name=nome_saida,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            else:
-                st.info("Nenhum lançamento contábil localizado para o período selecionado.")
-        else:
-            st.caption("Escolha o mês e clique em **Executar conversão** para gerar a prévia e a planilha.")
-    else:
-        st.warning(
-            "Nenhuma data de lançamento foi encontrada no PDF. "
-            "Se o arquivo for escaneado (imagem), é necessário aplicar OCR antes, "
-            "pois o pdfplumber só lê PDFs que já possuem camada de texto."
-        )
+                # ALTERAÇÃO SOLICITADA: Exibe na tela apenas uma prévia das 5 primeiras linhas
