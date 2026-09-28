@@ -42,7 +42,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     """
     Processa as linhas aplicando as regras contábeis, filtros de mês e mapeamento de subcontas.
     """
-    linha_limpa = linha.strip().replace('|', ' ')
+    linha_limpa = line_clean = linha.strip().replace('|', ' ')
     padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
     match_data = re.search(padrao_data, linha_limpa)
     if not match_data:
@@ -117,7 +117,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
 
     # Mapeamento de subcontas
     conta_mapeada = None
-    for palabra, conta in regras_mapeamento.items():
+    for palavra, conta in regras_mapeamento.items():
         if palavra.upper() in descricao_final.upper():
             if str(conta).strip() == str(conta_banco).strip():
                 continue
@@ -199,7 +199,8 @@ if not arquivo_carregado and "resultado" in st.session_state:
 
 if arquivo_carregado:
     linhas = []
-    extensao_arquivo = os.path.splitext(arquivo_carregado.name).lower()
+    # CORREÇÃO DO ERRO: Corrigido o nome da função de splitext
+    extensao_arquivo = os.path.splitext(arquivo_carregado.name)[1].lower()
     
     try:
         if extensao_arquivo == ".pdf":
@@ -228,7 +229,7 @@ if arquivo_carregado:
     periodos_disponiveis = pre_analisar_meses(linhas)
     
     if periodos_disponiveis:
-        opcoes_selecao = [f"{MESES_NOME[p]} de {p}" for p in periodos_disponiveis]
+        opcoes_selecao = [f"{MESES_NOME[p[0]]} de {p[1]}" for p in periodos_disponiveis]
         
         if len(periodos_disponiveis) > 1:
             st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** no extrato!")
@@ -257,4 +258,4 @@ if arquivo_carregado:
             if registros:
                 df = pd.DataFrame(registros)
                 
-                # ALTERAÇÃO: Garante a ordenação cronológica estrita baseado na data real (crescente)
+                # Garante a ordenação cronológica estrita baseado na data real (crescente)
