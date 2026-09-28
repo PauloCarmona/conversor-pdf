@@ -3,6 +3,7 @@ import re
 import io
 import pandas as pd
 import streamlit as st
+from pypdf import PdfReader  # Nova biblioteca para ler o PDF diretamente
 
 # Configuração da página do Streamlit
 st.set_page_config(
@@ -20,7 +21,7 @@ MESES_NOME = {
 
 def pre_analisar_meses(linhas):
     """
-    Varre o arquivo de texto para identificar quais meses/anos possuem lançamentos válidos.
+    Varre as linhas de texto para identificar quais meses/anos possuem lançamentos válidos.
     """
     meses_encontrados = set()
     padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
@@ -28,14 +29,12 @@ def pre_analisar_meses(linhas):
     for linha in linhas:
         match = re.search(padrao_data, linha.strip())
         if match:
-            # Ignora linhas de saldo diário na pré-analise para evitar meses fantasmas
             if "SALDO DIA" in linha or "SALDO ANTERIOR" in linha:
                 continue
             mes = int(match.group(2))
             ano = int(match.group(3))
             meses_encontrados.add((mes, ano))
             
-    # Retorna uma lista ordenada de tuplas (mes, ano)
     return sorted(list(meses_encontrados), key=lambda x: (x[1], x[0]))
 
 def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, mes_filtro, ano_filtro):
@@ -51,7 +50,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     mes_linha = int(match_data.group(2))
     ano_linha = int(match_data.group(3))
     
-    # FILTRO DE MÊS E ANO: Ignora a linha se não pertencer ao período escolhido
+    # Filtro de período escolhido
     if mes_linha != mes_filtro or ano_linha != ano_filtro:
         return None
         
@@ -110,6 +109,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     texto_complementar = re.sub(r'\s+', ' ', texto_complementar)
     descricao_final = f"{texto_complementar} (Doc: {doc})"
 
+    # Regra contábil informada
     if tipo == 'D':
         conta_debito = conta_fornecedor
         conta_credito = conta_banco
@@ -129,8 +129,8 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     }
 
 # --- PAINEL VISUAL STREAMLIT ---
-st.title("📊 Conversor Contábil Multi-Meses")
-st.markdown("Insira os arquivos de texto extraídos do extrato. O sistema identificará automaticamente os períodos disponíveis.")
+st.title("📊 Conversor Contábil de PDFs Direto")
+st.markdown("Agora você pode arrastar os seus arquivos **PDF** diretamente aqui sem precisar converter para texto antes.")
 
 # Configuração fixa do plano de contas na sidebar
 st.sidebar.header("⚙️ Plano de Contas")
@@ -138,38 +138,42 @@ cont_banco = st.sidebar.text_input("Conta Banco:", value="6")
 cont_fornecedor = st.sidebar.text_input("Transitória Fornecedor:", value="848")
 cont_cliente = st.sidebar.text_input("Transitória Cliente:", value="861")
 
+# Alterado para aceitar arquivos PDF nativamente
 arquivo_carregado = st.file_uploader(
-    "Selecione um arquivo de texto (.txt) do extrato por vez para analisar", 
-    type=["txt"]
+    "Selecione um arquivo de extrato em formato PDF para analisar", 
+    type=["pdf"]
 )
 
 if arquivo_carregado:
-    # Ler as linhas do arquivo primeiro
-    string_data = arquivo_carregado.read().decode("utf-8")
-    linhas = string_data.split('\n')
+    linhas = []
+    try:
+        # Lê o PDF diretamente da memória do Streamlit
+        leitor_pdf = PdfReader(arquivo_carregado)
+        for pagina in leitor_pdf.pages:
+            texto_pagina = pagina.extract_text()
+            if texto_pagina:
+                linhas.extend(texto_pagina.split('\n'))
+    except Exception as e:
+        st.error(f"Erro ao ler o arquivo PDF. Certifique-se de que não está corrompido.")
+        st.stop()
     
     # Executa a pré-análise para mapear os meses reais contidos no arquivo
     periodos_disponiveis = pre_analisar_meses(linhas)
     
     if periodos_disponiveis:
-        # Monta opções legíveis para o usuário ex: "Maio de 2026"
         opcoes_selecao = [f"{MESES_NOME[p[0]]} de {p[1]}" for p in periodos_disponiveis]
         
-        # Alerta se houver mais de um mês detectado
         if len(periodos_disponiveis) > 1:
-            st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** neste arquivo!")
+            st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** neste PDF!")
         
-        # Solicita ao usuário qual mês deseja converter através do Selectbox
         periodo_escolhido = st.selectbox(
             "📅 Qual mês você deseja converter e exportar agora?",
             options=opcoes_selecao
         )
         
-        # Recupera o mês e ano numérico com base na seleção da tela
         index_escolhido = opcoes_selecao.index(periodo_escolhido)
         mes_filtro, ano_filtro = periodos_disponiveis[index_escolhido]
         
-        # Processamento efetivo disparado após a escolha do mês
         registros = []
         for linha in linhas:
             res = processar_linha_caixa(linha.strip(), cont_banco, cont_fornecedor, cont_cliente, mes_filtro, ano_filtro)
@@ -180,7 +184,6 @@ if arquivo_carregado:
             df = pd.DataFrame(registros)
             df = df.iloc[::-1].reset_index(drop=True) # Ordem cronológica correta
             
-            # Tipagem como texto puro para as amarrações do ERP
             df['data'] = df['data'].astype(str)
             df['conta debito'] = df['conta debito'].astype(str)
             df['conta crédito'] = df['conta crédito'].astype(str)
@@ -191,7 +194,6 @@ if arquivo_carregado:
             st.markdown(f"### 👀 Prévia da Importação - Período: `{periodo_escolhido}`")
             st.dataframe(df, use_container_width=True)
             
-            # Geração do arquivo XLSX
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
@@ -207,4 +209,4 @@ if arquivo_carregado:
         else:
             st.info(f"Nenhum lançamento encontrado para o período {periodo_escolhido}.")
     else:
-        st.error("Não encontramos nenhuma data válida no formato contábil dentro deste arquivo. Verifique o seu OCR.")
+        st.error("Não conseguimos ler texto dentro deste PDF. Se ele for um PDF escaneado (imagem pura), você precisará rodar um OCR nele antes, ou podemos integrar um leitor de imagem (OCR) diretamente neste script.")
