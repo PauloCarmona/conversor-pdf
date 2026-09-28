@@ -259,9 +259,11 @@ if arquivo_carregado:
                         registros.append(res)
 
                 if registros:
-                    # Exibe a prévia na tela via DataFrame
+                    # Exibe a prévia na tela com a coluna Valor formatada com vírgula
                     df_preview = pd.DataFrame(registros)
                     df_preview.columns = ['Data', 'Conta Débito', 'Conta Crédito', 'Valor', 'Descrição']
+                    df_preview['Valor'] = df_preview['Valor'].apply(lambda v: f"{v:.2f}".replace('.', ','))
+                    
                     st.dataframe(df_preview, use_container_width=True)
                     
                     # Gera a string do arquivo TXT final
