@@ -87,7 +87,6 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
         return None
 
     try:
-        # Extrai o valor float puro para manter o tipo numérico na Coluna D
         valor_limpo = valor_str.replace('.', '').replace(',', '.')
         valor_float = float(valor_limpo)
         
@@ -118,7 +117,9 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     texto_complementar = " ".join(palavras_desc).strip()
     texto_complementar = re.sub(r'\s+', ' ', texto_complementar)
     texto_complementar = re.sub(r'\b\d{1,3}(\.\d{3})*,\d{2}\b', '', texto_complementar).strip()
-    descricao_final = f"{texto_complementar} (Doc: {doc})"
+    
+    # Remove ponto e vírgula da descrição para evitar quebra de colunas no TXT
+    descricao_final = f"{texto_complementar} (Doc: {doc})".replace(';', ' ')
 
     # Mapeamento de subcontas
     conta_mapeada = None
@@ -138,14 +139,27 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
 
     data_formatada = f"{dia_final}/{mes_linha:02d}/{ano_linha}"
 
-    # Ordem das colunas: A=data, B=conta débito, C=conta crédito, D=valor (numérico), E=descrição
     return {
         'data': data_formatada,
-        'conta débito': conta_debito,
-        'conta crédito': conta_credito,
+        'conta_debito': conta_debito,
+        'conta_credito': conta_credito,
         'valor': valor_float,
-        'descrição': descricao_final
+        'descricao': descricao_final
     }
+
+def gerar_conteudo_txt(registros):
+    """
+    Monta diretamente as linhas do arquivo TXT no formato exigido para importação:
+    Data;ContaDebito;ContaCredito;Valor;Descricao
+    Valor numérico formatado com 2 casas decimais, sem separador de milhar e com vírgula decimal.
+    """
+    linhas_txt = []
+    for r in registros:
+        valor_formatado = f"{r['valor']:.2f}".replace('.', ',')
+        linha = f"{r['data']};{r['conta_debito']};{r['conta_credito']};{valor_formatado};{r['descricao']}"
+        linhas_txt.append(linha)
+    
+    return "\r\n".join(linhas_txt)
 
 # --- PAINEL VISUAL STREAMLIT ---
 st.title("📊 Conversor Contábil TXT")
@@ -203,7 +217,6 @@ if not arquivo_carregado and "resultado" in st.session_state:
     del st.session_state.resultado
 
 if arquivo_carregado:
-    # Trata caso o Streamlit devolva o arquivo dentro de uma lista
     if isinstance(arquivo_carregado, list):
         arquivo_carregado = arquivo_carregado[0] if len(arquivo_carregado) > 0 else None
 
@@ -246,23 +259,34 @@ if arquivo_carregado:
                         registros.append(res)
 
                 if registros:
-                    df = pd.DataFrame(registros)
-                    st.dataframe(df, use_container_width=True)
+                    # Exibe a prévia na tela via DataFrame
+                    df_preview = pd.DataFrame(registros)
+                    df_preview.columns = ['Data', 'Conta Débito', 'Conta Crédito', 'Valor', 'Descrição']
+                    st.dataframe(df_preview, use_container_width=True)
                     
-                    # Exporta a Coluna D (valor) como número com decimal ',' e formatado com 2 casas decimais sem cabeçalho
-                    csv_data = df.to_csv(
-                        index=False, 
-                        header=False, 
-                        sep=';', 
-                        decimal=',', 
-                        float_format='%.2f'
-                    ).encode('utf-8-sig')
+                    # Gera a string do arquivo TXT final
+                    conteudo_txt = gerar_conteudo_txt(registros)
+                    txt_bytes = conteudo_txt.encode('utf-8-sig')
                     
-                    st.download_button(
-                        label="📥 Descarregar CSV Contábil",
-                        data=csv_data,
-                        file_name=f"extrato_convertido_{mes_filtro:02d}_{ano_filtro}.csv",
-                        mime="text/csv"
-                    )
+                    col_down1, col_down2 = st.columns(2)
+                    
+                    with col_down1:
+                        st.download_button(
+                            label="📥 Descarregar Arquivo .TXT de Importação",
+                            data=txt_bytes,
+                            file_name=f"extrato_importacao_{mes_filtro:02d}_{ano_filtro}.txt",
+                            mime="text/plain",
+                            type="primary",
+                            use_container_width=True
+                        )
+                        
+                    with col_down2:
+                        st.download_button(
+                            label="📄 Descarregar CSV Para Conferência",
+                            data=txt_bytes,
+                            file_name=f"extrato_conferencia_{mes_filtro:02d}_{ano_filtro}.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
                 else:
                     st.warning("Nenhum lançamento válido foi encontrado para o período selecionado.")
