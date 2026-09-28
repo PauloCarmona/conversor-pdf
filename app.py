@@ -4,35 +4,69 @@ import io
 import pandas as pd
 import streamlit as st
 
-# Configuração inicial da página do Streamlit
+# Configuração da página do Streamlit
 st.set_page_config(
-    page_title="Conversor Contábil - ERP",
+    page_title="Conversor Contábil Inteligente",
     page_icon="📊",
     layout="wide"
 )
 
-def processar_linha_caixa(linha):
+# Dicionário para conversão amigável de número do mês para nome em português
+MESES_NOME = {
+    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+}
+
+def pre_analisar_meses(linhas):
     """
-    Trata cada linha do extrato brutos da Caixa Econômica,
-    aplica filtros e as condicionais de amarração de Débito/Crédito.
+    Varre o arquivo de texto para identificar quais meses/anos possuem lançamentos válidos.
     """
-    padrao_data = r'^(\d{2}/\d{2}/\d{4})'
-    if not re.search(padrao_data, linha):
+    meses_encontrados = set()
+    padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
+    
+    for linha in linhas:
+        match = re.search(padrao_data, linha.strip())
+        if match:
+            # Ignora linhas de saldo diário na pré-analise para evitar meses fantasmas
+            if "SALDO DIA" in linha or "SALDO ANTERIOR" in linha:
+                continue
+            mes = int(match.group(2))
+            ano = int(match.group(3))
+            meses_encontrados.add((mes, ano))
+            
+    # Retorna uma lista ordenada de tuplas (mes, ano)
+    return sorted(list(meses_encontrados), key=lambda x: (x[1], x[0]))
+
+def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, mes_filtro, ano_filtro):
+    """
+    Processa as linhas filtrando rigorosamente pelo mês e ano selecionados pelo usuário.
+    """
+    padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
+    match_data = re.search(padrao_data, linha)
+    if not match_data:
+        return None
+        
+    data_final = match_data.group(1)
+    mes_linha = int(match_data.group(2))
+    ano_linha = int(match_data.group(3))
+    
+    # FILTRO DE MÊS E ANO: Ignora a linha se não pertencer ao período escolhido
+    if mes_linha != mes_filtro or ano_linha != ano_filtro:
         return None
         
     partes = list(filter(None, linha.split()))
     if len(partes) < 4:
         return None
         
-    data = partes[0]
     texto_linha = " ".join(partes)
     
-    # Filtra linhas redundantes de saldo
     if "SALDO DIA" in texto_linha or "SALDO ANTERIOR" in texto_linha:
         return None
         
-    # Isola o tipo (D/C) e o valor
     tipo = None
+    valor_str = ""
+    
     if partes[-1] in ['D', 'C']:
         tipo = partes[-1]
         valor_str = partes[-2]
@@ -40,12 +74,12 @@ def processar_linha_caixa(linha):
         tipo = partes[-2]
         valor_str = partes[-3]
     else:
-        if 'D' in partes[-1] and ',' in partes[-1]:
+        if partes[-1].endswith('D') and ',' in partes[-1]:
             tipo = 'D'
-            valor_str = partes[-1].replace('D', '')
-        elif 'C' in partes[-1] and ',' in partes[-1]:
+            valor_str = partes[-1][:-1]
+        elif partes[-1].endswith('C') and ',' in partes[-1]:
             tipo = 'C'
-            valor_str = partes[-1].replace('C', '')
+            valor_str = partes[-1][:-1]
         else:
             return None
 
@@ -55,87 +89,98 @@ def processar_linha_caixa(linha):
     except ValueError:
         return None
 
-    # Captura o número do documento (padrão 6 dígitos Caixa)
     doc = "000000"
     for p in partes[1:5]:
         if p.isdigit() and len(p) == 6:
             doc = p
             break
 
-    # Monta a descrição inteligível
-    desc_partes = [p for p in partes if p not in [data, doc, valor_str, tipo] and not re.match(r'^\d{2}:\d{2}:\d{2}\$', p)]
-    if len(desc_partes) > 0 and desc_partes[-1] in ['C', 'D']:
-        desc_partes.pop()
+    sub_hora = r'\b\d{2}:\d{2}(:\d{2})?\b'
+    elementos_remover = [f"{data_final}/{mes_linha:02d}/{ano_linha}", doc, valor_str, tipo, 'D', 'C']
     
-    descricao_final = f"{' '.join(desc_partes)} (Doc: {doc})"
+    palavras_desc = []
+    for p in partes:
+        if re.match(sub_hora, p) or p in elementos_remover:
+            continue
+        p_limpo = p.replace('*', '').replace(',', '').strip()
+        if p_limpo:
+            palavras_desc.append(p_limpo)
 
-    # CRITÉRIO CONTÁBIL:
-    # Se valor negativo (D): Débito = 848 / Crédito = 6
-    # Se valor positivo (C): Débito = 6 / Crédito = 861
+    texto_complementar = " ".join(palavras_desc).strip()
+    texto_complementar = re.sub(r'\s+', ' ', texto_complementar)
+    descricao_final = f"{texto_complementar} (Doc: {doc})"
+
     if tipo == 'D':
-        conta_debito = "848"
-        conta_credito = "6"
+        conta_debito = conta_fornecedor
+        conta_credito = conta_banco
     else:
-        conta_debito = "6"
-        conta_credito = "861"
+        conta_debito = conta_banco
+        conta_credito = conta_cliente
 
-    # Formata a casa decimal utilizando vírgula conforme exigido pelo ERP
     valor_com_virgula = f"{valor_float:.2f}".replace('.', ',')
+    data_formatada = f"{data_final}/{mes_linha:02d}/{ano_linha}"
 
     return {
-        'data': data,
+        'data': data_formatada,
         'conta debito': conta_debito,
         'conta crédito': conta_credito,
         'valor': valor_com_virgula,
         'descrição': descricao_final
     }
 
-# --- INTERFACE VISUAL STREAMLIT ---
-st.title("📊 Conversor de Extratos para ERP Contábil")
-st.markdown("""
-Esta aplicação processa os arquivos de texto (`.txt`) extraídos do OCR dos seus PDFs de imagem da Caixa, 
-limpa as linhas informativas, reordena de forma cronológica e amarra as contas contábeis automaticamente.
-""")
+# --- PAINEL VISUAL STREAMLIT ---
+st.title("📊 Conversor Contábil Multi-Meses")
+st.markdown("Insira os arquivos de texto extraídos do extrato. O sistema identificará automaticamente os períodos disponíveis.")
 
-st.sidebar.header("Regras Aplicadas")
-st.sidebar.info("""
-- **Saídas (Negativos):** D = 848 | C = 6
-- **Entradas (Positivos):** D = 6 | C = 861
-- **Data:** Texto corrido (`dd/mm/aaaa`)
-- **Decimais:** Separados por vírgula ( `,` )
-""")
+# Configuração fixa do plano de contas na sidebar
+st.sidebar.header("⚙️ Plano de Contas")
+cont_banco = st.sidebar.text_input("Conta Banco:", value="6")
+cont_fornecedor = st.sidebar.text_input("Transitória Fornecedor:", value="848")
+cont_cliente = st.sidebar.text_input("Transitória Cliente:", value="861")
 
-# Componente nativo do Streamlit para upload de arquivos
-arquivos_carregados = st.file_uploader(
-    "Arraste ou selecione os arquivos de texto (.txt) gerados pelo OCR do extrato", 
-    type=["txt"], 
-    accept_multiple_files=True
+arquivo_carregado = st.file_uploader(
+    "Selecione um arquivo de texto (.txt) do extrato por vez para analisar", 
+    type=["txt"]
 )
 
-if arquivos_carregados:
-    st.success(f"{len(arquivos_carregados)} arquivo(s) carregado(s) com sucesso!")
+if arquivo_carregado:
+    # Ler as linhas do arquivo primeiro
+    string_data = arquivo_carregado.read().decode("utf-8")
+    linhas = string_data.split('\n')
     
-    for arquivo in arquivos_carregados:
-        st.subheader(f"📄 Processando: {arquivo.name}")
+    # Executa a pré-análise para mapear os meses reais contidos no arquivo
+    periodos_disponiveis = pre_analisar_meses(linhas)
+    
+    if periodos_disponiveis:
+        # Monta opções legíveis para o usuário ex: "Maio de 2026"
+        opcoes_selecao = [f"{MESES_NOME[p[0]]} de {p[1]}" for p in periodos_disponiveis]
         
-        # Lê o conteúdo do arquivo enviado
-        string_data = arquivo.read().decode("utf-8")
-        linhas = string_data.split('\n')
+        # Alerta se houver mais de um mês detectado
+        if len(periodos_disponiveis) > 1:
+            st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** neste arquivo!")
         
+        # Solicita ao usuário qual mês deseja converter através do Selectbox
+        periodo_escolhido = st.selectbox(
+            "📅 Qual mês você deseja converter e exportar agora?",
+            options=opcoes_selecao
+        )
+        
+        # Recupera o mês e ano numérico com base na seleção da tela
+        index_escolhido = opcoes_selecao.index(periodo_escolhido)
+        mes_filtro, ano_filtro = periodos_disponiveis[index_escolhido]
+        
+        # Processamento efetivo disparado após a escolha do mês
         registros = []
         for linha in linhas:
-            res = processar_linha_caixa(linha.strip())
+            res = processar_linha_caixa(linha.strip(), cont_banco, cont_fornecedor, cont_cliente, mes_filtro, ano_filtro)
             if res:
                 registros.append(res)
                 
         if registros:
-            # Estrutura no Pandas
             df = pd.DataFrame(registros)
+            df = df.iloc[::-1].reset_index(drop=True) # Ordem cronológica correta
             
-            # Inverte para ordem cronológica (do mais antigo ao mais recente)
-            df = df.iloc[::-1].reset_index(drop=True)
-            
-            # Força as colunas para formato string/texto
+            # Tipagem como texto puro para as amarrações do ERP
             df['data'] = df['data'].astype(str)
             df['conta debito'] = df['conta debito'].astype(str)
             df['conta crédito'] = df['conta crédito'].astype(str)
@@ -143,24 +188,23 @@ if arquivos_carregados:
             colunas_ordenadas = ['data', 'conta debito', 'conta crédito', 'valor', 'descrição']
             df = df[colunas_ordenadas]
             
-            # Exibe a prévia dos dados tratados na interface
+            st.markdown(f"### 👀 Prévia da Importação - Período: `{periodo_escolhido}`")
             st.dataframe(df, use_container_width=True)
             
-            # Cria o buffer do Excel em memória para disponibilizar para download
+            # Geração do arquivo XLSX
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
             dados_excel = output.getvalue()
             
-            # Botão de download dinâmico gerado pelo Streamlit
-            nome_saida = f"{os.path.splitext(arquivo.name)[0]}_pronto_ERP.xlsx"
+            nome_saida = f"{os.path.splitext(arquivo_carregado.name)[0]}_{periodo_escolhido.replace(' ', '_')}.xlsx"
             st.download_button(
-                label=f"📥 Baixar Planilha do Excel para {arquivo.name}",
+                label=f"📥 Baixar Planilha do Excel ({periodo_escolhido})",
                 data=dados_excel,
                 file_name=nome_saida,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-            st.markdown("---")
         else:
-            st.warning(f"Nenhum lançamento válido foi identificado dentro de {arquivo.name}. Verifique a qualidade do OCR.")
-
+            st.info(f"Nenhum lançamento encontrado para o período {periodo_escolhido}.")
+    else:
+        st.error("Não encontramos nenhuma data válida no formato contábil dentro deste arquivo. Verifique o seu OCR.")
