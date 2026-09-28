@@ -69,7 +69,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     if partes[-1] in ['D', 'C']:
         tipo = partes[-1]
         valor_str = partes[-2]
-    elif widget_index := len(partes) > 1 and partes[-2] in ['D', 'C']:
+    elif len(partes) > 2 and partes[-2] in ['D', 'C']:
         tipo = partes[-2]
         valor_str = partes[-3]
     else:
@@ -154,7 +154,7 @@ st.write("Adicione palavras-chave encontradas na descrição do extrato para ama
 if 'mapeamento' not in st.session_state:
     st.session_state.mapeamento = {"IOF": "55", "JUROS": "56", "COELBA": "110", "CESTA SERVICO": "200"}
 
-col_palavra, col_conta, col_btn = st.columns([2, 2, 1])
+col_palavra, col_conta, col_btn = st.columns(3)
 with col_palavra:
     nova_palavra = st.text_input("Palavra-chave no Histórico (Ex: IOF):", key="input_palavra")
 with col_conta:
@@ -252,5 +252,5 @@ if arquivo_carregado:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.info(f"Nenhum lançamento contábil processado para o período {periodo_escolhido}.")
+            st.info(f"Nenhum lançamento contábil localizado para o período selecionado.")
     else:
