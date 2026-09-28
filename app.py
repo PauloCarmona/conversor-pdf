@@ -36,7 +36,7 @@ def pre_analisar_meses(linhas):
             ano = int(match.group(3))
             meses_encontrados.add((mes, ano))
             
-    return sorted(list(meses_encontrados), key=lambda x: (x[1], x[0]))
+    return sorted(list(meses_encontrados), key=lambda x: (x, x))
 
 def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, mes_filtro, ano_filtro, regras_mapeamento):
     """
@@ -68,19 +68,19 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     
     # Identifica indicador D ou C na linha varrendo as colunas
     for i, parte in enumerate(partes):
-        parte_clean = parte.strip().upper()
-        if parte_clean in ['D', 'C']:
-            tipo = parte_clean
+        partes_clean = parte.strip().upper()
+        if partes_clean in ['D', 'C']:
+            tipo = partes_clean
             if i > 0:
                 valor_str = partes[i-1]
             break
-        elif parte_clean.endswith('D') and ',' in parte_clean:
+        elif partes_clean.endswith('D') and ',' in partes_clean:
             tipo = 'D'
-            valor_str = parte_clean[:-1]
+            valor_str = partes_clean[:-1]
             break
-        elif parte_clean.endswith('C') and ',' in parte_clean:
+        elif partes_clean.endswith('C') and ',' in partes_clean:
             tipo = 'C'
-            valor_str = parte_clean[:-1]
+            valor_str = partes_clean[:-1]
             break
 
     if not tipo or not valor_str:
@@ -257,8 +257,8 @@ if arquivo_carregado:
             else:
                 st.session_state.resultado = {"chave": chave_execucao, "df": None, "excel": None}
 
-        # Exibe o resultado da conversão de maneira controlada
+        # Exibe o resultado da conversão de maneira controlada e alinhada
         resultado = st.session_state.get("resultado")
         if resultado and resultado["chave"] == chave_execucao:
             if resultado["df"] is not None:
-                # ALTERAÇÃO SOLICITADA: Exibe na tela apenas uma prévia das 5 primeiras linhas
+                st.markdown(f"### 👀 Prévia das 5 primeiras linhas - Período: `{periodo_escolhido}`")
