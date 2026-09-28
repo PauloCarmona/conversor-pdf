@@ -199,9 +199,7 @@ if not arquivo_carregado and "resultado" in st.session_state:
 
 if arquivo_carregado:
     linhas = []
-    # Correção cirúrgica do nome da função de splitext
-    extensao_arquivo = os.path.splitext(arquivo_carregado.name)[0].lower() if '.' in arquivo_carregado.name else ''
-    extensao_arquivo = os.path.splitext(arquivo_carregado.name)[1].lower()
+    extensao_arquivo = os.path.splitext(arquivo_carregado.name).lower()
     
     try:
         if extensao_arquivo == ".pdf":
@@ -235,15 +233,15 @@ if arquivo_carregado:
         if len(periodos_disponiveis) > 1:
             st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** no extrato!")
         
-        with st.form("form_conversao"):
-            periodo_escolhido = st.selectbox(
-                "📅 Qual mês você deseja converter e exportar agora?",
-                options=opcoes_selecao
-            )
-            
-            submit_conversao = st.form_submit_button("▶️ Executar conversão", type="primary")
+        # MODIFICAÇÃO PRINCIPAL: Removido o 'with st.form' para permitir processamento reativo no clique
+        periodo_escolhido = st.selectbox(
+            "📅 Qual mês você deseja converter e exportar agora?",
+            options=opcoes_selecao
+        )
+        
+        executar = st.button("▶️ Executar conversão", key="btn_executar", type="primary")
 
-        if submit_conversao:
+        if executar:
             index_escolhido = opcoes_selecao.index(periodo_escolhido)
             mes_filtro, ano_filtro = periodos_disponiveis[index_escolhido]
             chave_execucao = f"{arquivo_carregado.name}|{periodo_escolhido}"
@@ -257,3 +255,6 @@ if arquivo_carregado:
                 if res:
                     registros.append(res)
 
+            if registros:
+                df = pd.DataFrame(registros)
+                
