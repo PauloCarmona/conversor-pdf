@@ -3,22 +3,14 @@ import re
 import io
 import pandas as pd
 import streamlit as st
-from google import genai  # SDK oficial do Google
+import pdfplumber  # Engine de extração local para PDFs escaneados/imagem
 
 # Configuração da página do Streamlit
 st.set_page_config(
-    page_title="Conversor Contábil Inteligente com Gemini IA",
-    page_icon="🤖",
+    page_title="Conversor Contábil Multi-Meses com Subcontas",
+    page_icon="📊",
     layout="wide"
 )
-
-# Inicialização do Cliente Gemini buscando o Token das Secrets do Streamlit
-try:
-    api_key = st.secrets["GEMINI_API_KEY"]
-    client = genai.Client(api_key=api_key)
-except Exception:
-    st.error("🔑 Erro: Chave 'GEMINI_API_KEY' não configurada nos Secrets do Streamlit Cloud.")
-    st.stop()
 
 # Dicionário para conversão amigável de número do mês para nome em português
 MESES_NOME = {
@@ -28,7 +20,9 @@ MESES_NOME = {
 }
 
 def pre_analisar_meses(linhas):
-    """Identifica quais meses/anos possuem lançamentos válidos."""
+    """
+    Varre as linhas de texto para identificar quais meses/anos possuem lançamentos válidos.
+    """
     meses_encontrados = set()
     padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
     
@@ -44,7 +38,9 @@ def pre_analisar_meses(linhas):
     return sorted(list(meses_encontrados), key=lambda x: (x[1], x[0]))
 
 def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, mes_filtro, ano_filtro, regras_mapeamento):
-    """Processa as linhas aplicando as regras contábeis, filtros de mês e mapeamento de subcontas."""
+    """
+    Processa as linhas aplicando as regras contábeis, filtros de mês e mapeamento de subcontas.
+    """
     padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
     match_data = re.search(padrao_data, linha)
     if not match_data:
@@ -54,6 +50,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     mes_linha = int(match_data.group(2))
     ano_linha = int(match_data.group(3))
     
+    # Filtro de período escolhido
     if mes_linha != mes_filtro or ano_linha != ano_filtro:
         return None
         
@@ -112,7 +109,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     texto_complementar = re.sub(r'\s+', ' ', texto_complementar)
     descricao_final = f"{texto_complementar} (Doc: {doc})"
 
-    # --- MAPEAMENTO INTELIGENTE DE SUBCONTAS POR PALAVRA-CHAVE ---
+    # --- MAPEAMENTO DE SUBCONTAS POR PALAVRA-CHAVE ---
     conta_mapeada = None
     for palavra, conta in regras_mapeamento.items():
         if palavra.upper() in descricao_final.upper():
@@ -140,8 +137,8 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     }
 
 # --- PAINEL VISUAL STREAMLIT ---
-st.title("🤖 Conversor Contábil Autônomo com Mapeamento de Histórico")
-st.markdown("Arraste extratos em **PDF (Imagem ou Digital)**. A IA do Gemini fará a leitura e o sistema associará as contas.")
+st.title("📊 Conversor Contábil de PDFs Direto com Subcontas")
+st.markdown("Arraste os seus arquivos **PDF** de imagem ou escaneados diretamente aqui. O sistema usará o leitor local.")
 
 # 1. Configuração Fixa do Plano de Contas Padrão na Sidebar
 st.sidebar.header("⚙️ Contas Padrão")
@@ -153,11 +150,11 @@ cont_cliente = st.sidebar.text_input("Transitória Cliente (Padrão C):", value=
 st.markdown("### 🔍 Mapeamento Dinâmico de Subcontas")
 st.write("Adicione palavras-chave encontradas na descrição do extrato para amarrar automaticamente a contas específicas (Ex: tarifas, concessionárias, impostos):")
 
-# Inicializa o estado das regras de mapeamento para não sumir a cada clique
+# Inicializa o estado das regras de mapeamento na sessão do Streamlit
 if 'mapeamento' not in st.session_state:
     st.session_state.mapeamento = {"IOF": "55", "JUROS": "56", "COELBA": "110", "CESTA SERVICO": "200"}
 
-col_palavra, col_conta, col_btn = st.columns([3, 2, 1])
+col_palavra, col_conta, col_btn = st.columns([2, 2, 1])
 with col_palavra:
     nova_palavra = st.text_input("Palavra-chave no Histórico (Ex: IOF):", key="input_palavra")
 with col_conta:
@@ -171,66 +168,44 @@ with col_btn:
 
 # Exibe as regras atualmente cadastradas em formato de tags administráveis
 if st.session_state.mapeamento:
-    st.write("**Regras de Subcontas Ativas:**")
-    cols = st.columns(min(len(st.session_state.mapeamento), 4))
+    st.write("**Regras de Subcontas Ativas (Clique no botão para remover):**")
+    cols = st.columns(4)
     for idx, (palavra, conta) in enumerate(st.session_state.mapeamento.items()):
         col_atual = cols[idx % 4]
         with col_atual:
-            if st.button(f"❌ {palavra} ➡️ Conta {conta}", key=f"del_{palavra}"):
+            if st.button(f"❌ {palavra} ➡️ {conta}", key=f"del_{palavra}", use_container_width=True):
                 del st.session_state.mapeamento[palavra]
                 st.rerun()
 
 st.markdown("---")
 
-# Componente para carregar os PDFs
+# Componente para carregar os PDFs (Leitura nativa e local)
 arquivo_carregado = st.file_uploader(
-    "Selecione um extrato em formato PDF para processamento", 
+    "Selecione um arquivo de extrato em formato PDF para analisar", 
     type=["pdf"]
 )
 
 if arquivo_carregado:
     linhas = []
+    try:
+        # Abre o PDF usando pdfplumber de forma 100% local
+        with pdfplumber.open(arquivo_carregado) as pdf:
+            for pagina in pdf.pages:
+                texto_pagina = pagina.extract_text()
+                if texto_pagina:
+                    linhas.extend(texto_pagina.split('\n'))
+    except Exception as e:
+        st.error(f"Erro ao ler o arquivo PDF. Certifique-se de que não está corrompido.")
+        st.stop()
     
-    with st.spinner("🤖 O Gemini está analisando visualmente as páginas do PDF... Aguarde."):
-        try:
-            dados_pdf = arquivo_carregado.read()
-            
-            prompt_ocr = """
-            Você é um leitor especialista em extratos bancários em formato de imagem/digitalizado.
-            Extraia o texto de TODAS as transações financeiras contidas neste PDF.
-            Para cada transação encontrada, retorne estritamente em uma única linha usando o seguinte formato textual:
-            DD/MM/AAAA [Numero do documento se houver] [Histórico e nomes completos dos favorecidos] [Valor] [D ou C]
-            
-            Regras estritas:
-            1. Preserve exatamente as letras "D" para débito/saídas e "C" para crédito/entradas conforme aparecem no papel.
-            2. Não pule nenhuma linha de transação.
-            3. Não adicione cabeçalhos, comentários, explicações ou formatações Markdown (como ``` ou tabelas). Retorne apenas as linhas cruas de texto.
-            """
-            
-            resposta = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=[
-                    prompt_ocr,
-                    {"mime_type": "application/pdf", "data": dados_pdf}
-                ]
-            )
-            
-            texto_extraido = resposta.text
-            if texto_extraido:
-                linhas = texto_extraido.split('\n')
-                
-        except Exception as e:
-            st.error(f"Ocorreu um erro ao se comunicar com a API do Gemini: {e}")
-            st.stop()
-            
-    # Executa a análise inteligente baseada no mapeamento de datas
+    # Executa a pré-análise baseada no mapeamento de datas
     periodos_disponiveis = pre_analisar_meses(linhas)
     
     if periodos_disponiveis:
         opcoes_selecao = [f"{MESES_NOME[p[0]]} de {p[1]}" for p in periodos_disponiveis]
         
         if len(periodos_disponiveis) > 1:
-            st.warning(f"⚠️ Atenção: A IA detectou lançamentos de **{len(periodos_disponiveis)} meses diferentes** neste documento!")
+            st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** neste PDF!")
         
         periodo_escolhido = st.selectbox(
             "📅 Qual mês você deseja converter e exportar agora?",
@@ -252,3 +227,30 @@ if arquivo_carregado:
                 
         if registros:
             df = pd.DataFrame(registros)
+            df = df.iloc[::-1].reset_index(drop=True) # Mantém ordem cronológica crescente
+            
+            df['data'] = df['data'].astype(str)
+            df['conta debito'] = df['conta debito'].astype(str)
+            df['conta crédito'] = df['conta crédito'].astype(str)
+            
+            colunas_ordenadas = ['data', 'conta debito', 'conta crédito', 'valor', 'descrição']
+            df = df[colunas_ordenadas]
+            
+            st.markdown(f"### 👀 Prévia da Importação Contábil - Período: `{periodo_escolhido}`")
+            st.dataframe(df, use_container_width=True)
+            
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False)
+            dados_excel = output.getvalue()
+            
+            nome_saida = f"{os.path.splitext(arquivo_carregado.name)[0]}_{periodo_escolhido.replace(' ', '_')}.xlsx"
+            st.download_button(
+                label=f"📥 Baixar Planilha Pronta para o ERP ({periodo_escolhido})",
+                data=dados_excel,
+                file_name=nome_saida,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info(f"Nenhum lançamento contábil processado para o período {periodo_escolhido}.")
+    else:
