@@ -198,63 +198,76 @@ if not arquivo_carregado and "resultado" in st.session_state:
     del st.session_state.resultado
 
 if arquivo_carregado:
-    linhas = []
-    extensao_arquivo = os.path.splitext(arquivo_carregado.name).lower()
-    
-    try:
-        if extensao_arquivo == ".pdf":
-            with pdfplumber.open(arquivo_carregado) as pdf:
-                for pagina in pdf.pages:
-                    texto_pagina = pagina.extract_text()
-                    if texto_pagina:
-                        linhas.extend(texto_pagina.split('\n'))
+    # Garante o manuseio correto do objeto retornado pelo st.file_uploader
+    if isinstance(arquivo_carregado, list):
+        arquivo_carregado = arquivo_carregado[0] if arquivo_carregado else None
+
+    if arquivo_carregado and hasattr(arquivo_carregado, "name"):
+        linhas = []
+        extensao_arquivo = os.path.splitext(arquivo_carregado.name).lower()
+        
+        try:
+            if extensao_arquivo == ".pdf":
+                with pdfplumber.open(arquivo_carregado) as pdf:
+                    for pagina in pdf.pages:
+                        texto_pagina = pagina.extract_text()
+                        if texto_pagina:
+                            linhas.extend(texto_pagina.split('\n'))
+                            
+            elif extensao_arquivo in [".xlsx", ".xls"]:
+                df_excel = pd.read_excel(arquivo_carregado, header=None)
+                df_excel = df_excel.fillna("")
+                for index, row in df_excel.iterrows():
+                    linha_texto = " ".join([str(val).strip() for val in row.values if str(val).strip()])
+                    if linha_texto:
+                        linhas.append(linha_texto)
                         
-        elif extensao_arquivo in [".xlsx", ".xls"]:
-            df_excel = pd.read_excel(arquivo_carregado, header=None)
-            df_excel = df_excel.fillna("")
-            for index, row in df_excel.iterrows():
-                linha_texto = " ".join([str(val).strip() for val in row.values if str(val).strip()])
-                if linha_texto:
-                    linhas.append(linha_texto)
-                    
-        elif extensao_arquivo == ".txt":
-            string_data = arquivo_carregado.read().decode("utf-8", errors="ignore")
-            linhas = string_data.split('\n')
-            
-    except Exception as e:
-        st.error(f"Erro ao decodificar a estrutura do arquivo {arquivo_carregado.name}: {e}")
-        st.stop()
-    
-    periodos_disponiveis = pre_analisar_meses(linhas)
-    
-    if periodos_disponiveis:
-        opcoes_selecao = [f"{MESES_NOME[p[0]]} de {p[1]}" for p in periodos_disponiveis]
-        
-        if len(periodos_disponiveis) > 1:
-            st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** no extrato!")
-        
-        # MODIFICAÇÃO PRINCIPAL: Removido o 'with st.form' para permitir processamento reativo no clique
-        periodo_escolhido = st.selectbox(
-            "📅 Qual mês você deseja converter e exportar agora?",
-            options=opcoes_selecao
-        )
-        
-        executar = st.button("▶️ Executar conversão", key="btn_executar", type="primary")
-
-        if executar:
-            index_escolhido = opcoes_selecao.index(periodo_escolhido)
-            mes_filtro, ano_filtro = periodos_disponiveis[index_escolhido]
-            chave_execucao = f"{arquivo_carregado.name}|{periodo_escolhido}"
-            
-            registros = []
-            for linha in linhas:
-                res = processar_linha_caixa(
-                    linha, cont_banco, cont_fornecedor, cont_cliente,
-                    mes_filtro, ano_filtro, st.session_state.mapeamento
-                )
-                if res:
-                    registros.append(res)
-
-            if registros:
-                df = pd.DataFrame(registros)
+            elif extensao_arquivo == ".txt":
+                string_data = arquivo_carregado.read().decode("utf-8", errors="ignore")
+                linhas = string_data.split('\n')
                 
+        except Exception as e:
+            st.error(f"Erro ao decodificar a estrutura do arquivo {arquivo_carregado.name}: {e}")
+            st.stop()
+        
+        periodos_disponiveis = pre_analisar_meses(linhas)
+        
+        if periodos_disponiveis:
+            opcoes_selecao = [f"{MESES_NOME[p[0]]} de {p[1]}" for p in periodos_disponiveis]
+            
+            if len(periodos_disponiveis) > 1:
+                st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** no extrato!")
+            
+            periodo_escolhido = st.selectbox(
+                "📅 Qual mês você deseja converter e exportar agora?",
+                options=opcoes_selecao
+            )
+            
+            executar = st.button("▶️ Executar conversão", key="btn_executar", type="primary")
+
+            if executar:
+                index_escolhido = opcoes_selecao.index(periodo_escolhido)
+                mes_filtro, ano_filtro = periodos_disponiveis[index_escolhido]
+                
+                registros = []
+                for linha in linhas:
+                    res = processar_linha_caixa(
+                        linha, cont_banco, cont_fornecedor, cont_cliente,
+                        mes_filtro, ano_filtro, st.session_state.mapeamento
+                    )
+                    if res:
+                        registros.append(res)
+
+                if registros:
+                    df = pd.DataFrame(registros)
+                    st.dataframe(df, use_container_width=True)
+                    
+                    csv_data = df.to_csv(index=False, sep=';').encode('utf-8-sig')
+                    st.download_button(
+                        label="📥 Descarregar CSV Contábil",
+                        data=csv_data,
+                        file_name=f"extrato_convertido_{mes_filtro:02d}_{ano_filtro}.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.warning("Nenhum lançamento válido foi encontrado para o período selecionado.")
