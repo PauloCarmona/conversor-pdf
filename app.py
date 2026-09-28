@@ -59,20 +59,20 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     if "SALDO DIA" in linha_limpa or "SALDO ANTERIOR" in linha_limpa:
         return None
         
-    partes = list(filter(None, linha_limpa.split()))
-    if len(partes) < 2:
+    partes_linha = list(filter(None, linha_limpa.split()))
+    if len(partes_linha) < 2:
         return None
 
     tipo = None
     valor_str = ""
     
     # Identifica indicador D ou C na linha varrendo as colunas
-    for i, parte in enumerate(partes):
+    for i, parte in enumerate(partes_linha):
         partes_clean = parte.strip().upper()
         if partes_clean in ['D', 'C']:
             tipo = partes_clean
             if i > 0:
-                valor_str = partes[i-1]
+                valor_str = partes_linha[i-1]
             break
         elif partes_clean.endswith('D') and ',' in partes_clean:
             tipo = 'D'
@@ -93,17 +93,17 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
         return None
 
     doc = "000000"
-    for p in partes:
+    for p in partes_linha:
         p_clean = p.replace('-', '').replace('/', '').strip()
         if p_clean.isdigit() and len(p_clean) == 6:
             doc = p_clean
             break
 
     sub_hora = r'\b\d{2}:\d{2}(:\d{2})?\b'
-    elementos_remover = [partes, doc, valor_str, tipo, 'D', 'C', '-', '–']
+    elementos_remover = [partes_linha, doc, valor_str, tipo, 'D', 'C', '-', '–']
     
     palavras_desc = []
-    for p in partes:
+    for p in partes_linha:
         if re.search(sub_hora, p) or p in elementos_remover or any(dt in p for dt in [f"{dia_final}/{mes_linha:02d}", str(ano_linha)]):
             continue
         p_limpo = p.replace('*', '').strip()
@@ -194,17 +194,18 @@ arquivo_carregado = st.file_uploader(
 
 if arquivo_carregado:
     linhas = []
-    nome_extensao = os.path.splitext(arquivo_carregado.name).lower()
+    # CORREÇÃO DO ERRO: Modificado o nome da variável para evitar conflitos sintáticos
+    extensao_arquivo = os.path.splitext(arquivo_carregado.name)[1].lower()
     
     try:
-        if nome_extensao == ".pdf":
+        if extensao_arquivo == ".pdf":
             with pdfplumber.open(arquivo_carregado) as pdf:
                 for pagina in pdf.pages:
                     texto_pagina = pagina.extract_text()
                     if texto_pagina:
                         linhas.extend(texto_pagina.split('\n'))
                         
-        elif nome_extensao in [".xlsx", ".xls"]:
+        elif extensao_arquivo in [".xlsx", ".xls"]:
             df_excel = pd.read_excel(arquivo_carregado, header=None)
             df_excel = df_excel.fillna("")
             for index, row in df_excel.iterrows():
@@ -212,7 +213,7 @@ if arquivo_carregado:
                 if linha_texto:
                     linhas.append(linha_texto)
                     
-        elif nome_extensao == ".txt":
+        elif extensao_arquivo == ".txt":
             string_data = arquivo_carregado.read().decode("utf-8", errors="ignore")
             linhas = string_data.split('\n')
             
@@ -228,7 +229,6 @@ if arquivo_carregado:
         if len(periodos_disponiveis) > 1:
             st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** no extrato!")
         
-        # USO DE FORMULÁRIO DO STREAMLIT: Previne que o script apague as variáveis calculadas
         with st.form("form_conversao"):
             periodo_escolhido = st.selectbox(
                 "📅 Qual mês você deseja converter e exportar agora?",
@@ -253,7 +253,7 @@ if arquivo_carregado:
 
             if registros:
                 df = pd.DataFrame(registros)
-                # Mantém ordem cronológica crescente
                 df = df.iloc[::-1].reset_index(drop=True)
 
                 df['data'] = df['data'].astype(str)
+                df['conta debito'] = df['conta debito'].astype(str)
