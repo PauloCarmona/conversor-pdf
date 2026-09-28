@@ -87,7 +87,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
         return None
 
     try:
-        # Remove pontos de milhar existentes e troca a vírgula por ponto para conversão em float
+        # Extrai o valor float puro para manter o tipo numérico na Coluna D
         valor_limpo = valor_str.replace('.', '').replace(',', '.')
         valor_float = float(valor_limpo)
         
@@ -136,16 +136,14 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
         conta_debito = conta_banco
         conta_credito = conta_mapeada if conta_mapeada else conta_cliente
 
-    # Formatação sem separador de milhar e com vírgula para decimais (ex: 1234,56)
-    valor_formatado = f"{valor_float:.2f}".replace('.', ',')
     data_formatada = f"{dia_final}/{mes_linha:02d}/{ano_linha}"
 
-    # Retorna a estrutura para o ERP Domínio Web
+    # Ordem das colunas: A=data, B=conta débito, C=conta crédito, D=valor (numérico), E=descrição
     return {
         'data': data_formatada,
         'conta débito': conta_debito,
         'conta crédito': conta_credito,
-        'valor': valor_formatado,
+        'valor': valor_float,
         'descrição': descricao_final
     }
 
@@ -251,8 +249,15 @@ if arquivo_carregado:
                     df = pd.DataFrame(registros)
                     st.dataframe(df, use_container_width=True)
                     
-                    # Exporta sem o cabeçalho das colunas (header=False) e delimitado por ponto e vírgula
-                    csv_data = df.to_csv(index=False, header=False, sep=';').encode('utf-8-sig')
+                    # Exporta a Coluna D (valor) como número com decimal ',' e formatado com 2 casas decimais sem cabeçalho
+                    csv_data = df.to_csv(
+                        index=False, 
+                        header=False, 
+                        sep=';', 
+                        decimal=',', 
+                        float_format='%.2f'
+                    ).encode('utf-8-sig')
+                    
                     st.download_button(
                         label="📥 Descarregar CSV Contábil",
                         data=csv_data,
