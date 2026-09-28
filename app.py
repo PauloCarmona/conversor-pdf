@@ -66,21 +66,21 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     tipo = None
     valor_str = ""
     
+    # Identificação do indicador (D/C) e do valor
     if partes[-1] in ['D', 'C']:
         tipo = partes[-1]
         valor_str = partes[-2]
     elif len(partes) > 2 and partes[-2] in ['D', 'C']:
         tipo = partes[-2]
         valor_str = partes[-3]
+    elif partes[-1].endswith('D') and ',' in partes[-1]:
+        tipo = 'D'
+        valor_str = partes[-1][:-1]
+    elif partes[-1].endswith('C') and ',' in partes[-1]:
+        tipo = 'C'
+        valor_str = partes[-1][:-1]
     else:
-        if partes[-1].endswith('D') and ',' in partes[-1]:
-            tipo = 'D'
-            valor_str = partes[-1][:-1]
-        elif partes[-1].endswith('C') and ',' in partes[-1]:
-            tipo = 'C'
-            valor_str = partes[-1][:-1]
-        else:
-            return None
+        return None
 
     try:
         valor_limpo = valor_str.replace('.', '').replace(',', '.')
@@ -195,7 +195,7 @@ if arquivo_carregado:
                 if texto_pagina:
                     linhas.extend(texto_pagina.split('\n'))
     except Exception as e:
-        st.error(f"Erro ao ler o arquivo PDF. Certifique-se de que não está corrompido.")
+        st.error("Erro ao ler o arquivo PDF. Certifique-se de que não está corrompido.")
         st.stop()
     
     # Executa a pré-análise baseada no mapeamento de datas
@@ -252,5 +252,5 @@ if arquivo_carregado:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.info(f"Nenhum lançamento contábil localizado para o período selecionado.")
+            st.info("Nenhum lançamento contábil localizado para o período selecionado.")
     else:
