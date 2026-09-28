@@ -254,3 +254,4 @@ if arquivo_carregado:
         else:
             st.info(f"Nenhum lançamento contábil processado para o período {periodo_escolhido}.")
     else:
+else:
