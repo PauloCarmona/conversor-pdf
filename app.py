@@ -69,7 +69,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     if partes[-1] in ['D', 'C']:
         tipo = partes[-1]
         valor_str = partes[-2]
-    elif partes[-2] in ['D', 'C']:
+    elif widget_index := len(partes) > 1 and partes[-2] in ['D', 'C']:
         tipo = partes[-2]
         valor_str = partes[-3]
     else:
@@ -160,8 +160,8 @@ with col_palavra:
 with col_conta:
     nova_conta = st.text_input("Código da Conta Contábil Relacionada:", key="input_conta")
 with col_btn:
-    st.write("<style>.btn-align { margin-top: 28px; }</style>", unsafe_allow_html=True)
-    if st.button("➕ Adicionar Regra", key="add_regra"):
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("➕ Adicionar Regra", key="add_regra", use_container_width=True):
         if nova_palavra and nova_conta:
             st.session_state.mapeamento[nova_palavra.strip()] = nova_conta.strip()
             st.rerun()
