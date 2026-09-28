@@ -117,7 +117,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
 
     # Mapeamento de subcontas
     conta_mapeada = None
-    for palavra, conta in regras_mapeamento.items():
+    for palabra, conta in regras_mapeamento.items():
         if palavra.upper() in descricao_final.upper():
             if str(conta).strip() == str(conta_banco).strip():
                 continue
@@ -187,15 +187,19 @@ if st.session_state.mapeamento:
 
 st.markdown("---")
 
+# Seletor de Arquivo Único
 arquivo_carregado = st.file_uploader(
     "Selecione um arquivo de extrato para analisar", 
-    type=["pdf", "xlsx", "xls", "txt"]
+    type=["pdf", "xlsx", "xls", "txt"],
+    accept_multiple_files=False
 )
+
+if not arquivo_carregado and "resultado" in st.session_state:
+    del st.session_state.resultado
 
 if arquivo_carregado:
     linhas = []
-    # CORREÇÃO DO ERRO: Modificado o nome da variável para evitar conflitos sintáticos
-    extensao_arquivo = os.path.splitext(arquivo_carregado.name)[1].lower()
+    extensao_arquivo = os.path.splitext(arquivo_carregado.name).lower()
     
     try:
         if extensao_arquivo == ".pdf":
@@ -224,7 +228,7 @@ if arquivo_carregado:
     periodos_disponiveis = pre_analisar_meses(linhas)
     
     if periodos_disponiveis:
-        opcoes_selecao = [f"{MESES_NOME[p[0]]} de {p[1]}" for p in periodos_disponiveis]
+        opcoes_selecao = [f"{MESES_NOME[p]} de {p}" for p in periodos_disponiveis]
         
         if len(periodos_disponiveis) > 1:
             st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** no extrato!")
@@ -240,7 +244,6 @@ if arquivo_carregado:
         if submit_conversao:
             index_escolhido = opcoes_selecao.index(periodo_escolhido)
             mes_filtro, ano_filtro = periodos_disponiveis[index_escolhido]
-            chave_execucao = f"{arquivo_carregado.name}|{periodo_escolhido}"
             
             registros = []
             for linha in linhas:
@@ -253,7 +256,5 @@ if arquivo_carregado:
 
             if registros:
                 df = pd.DataFrame(registros)
-                df = df.iloc[::-1].reset_index(drop=True)
-
-                df['data'] = df['data'].astype(str)
-                df['conta debito'] = df['conta debito'].astype(str)
+                
+                # ALTERAÇÃO: Garante a ordenação cronológica estrita baseado na data real (crescente)
