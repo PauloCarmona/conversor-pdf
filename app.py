@@ -254,3 +254,8 @@ if arquivo_carregado:
         else:
             st.info("Nenhum lançamento contábil localizado para o período selecionado.")
     else:
+        st.warning(
+            "Nenhuma data de lançamento foi encontrada no PDF. "
+            "Se o arquivo for escaneado (imagem), é necessário aplicar OCR antes, "
+            "pois o pdfplumber só lê PDFs que já possuem camada de texto."
+        )
