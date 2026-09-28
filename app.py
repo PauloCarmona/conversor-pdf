@@ -27,7 +27,7 @@ def pre_analisar_meses(linhas):
     padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
     
     for linha in linhas:
-        linha_limpa = linha.strip()
+        linha_limpa = linha.strip().replace('|', ' ') # Remove barras de tabelas TXT
         match = re.search(padrao_data, linha_limpa)
         if match:
             if "SALDO DIA" in linha_limpa or "SALDO ANTERIOR" in linha_limpa:
@@ -36,13 +36,14 @@ def pre_analisar_meses(linhas):
             ano = int(match.group(3))
             meses_encontrados.add((mes, ano))
             
-    return sorted(list(meses_encontrados), key=lambda x: (x, x))
+    return sorted(list(meses_encontrados), key=lambda x: (x[1], x[0]))
 
 def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, mes_filtro, ano_filtro, regras_mapeamento):
     """
     Processa as linhas aplicando as regras contábeis, filtros de mês e mapeamento de subcontas.
     """
-    linha_limpa = linha.strip()
+    # Remove as barras verticais de formatação de tabelas TXT para não quebrar o split
+    linha_limpa = linha.strip().replace('|', ' ')
     padrao_data = r'^(\d{2})/(\d{2})/(\d{4})'
     match_data = re.search(padrao_data, linha_limpa)
     if not match_data:
@@ -66,7 +67,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     tipo = None
     valor_str = ""
     
-    # Identifica indicador D ou C na linha varrendo as colunas
+    # Identifica indicador D ou C na linha varrendo as colunas de trás para frente
     for i, parte in enumerate(partes):
         partes_clean = parte.strip().upper()
         if partes_clean in ['D', 'C']:
@@ -144,7 +145,7 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
 
 # --- PAINEL VISUAL STREAMLIT ---
 st.title("📊 Conversor Contábil Multi-Formato (PDF, Excel, TXT)")
-st.markdown("Arraste extratos bancários em formato **PDF, Excel (.xlsx, .xls) ou Bloco de Notas (.txt)** para processamento contábil local [1].")
+st.markdown("Arraste extratos bancários em formato **PDF, Excel (.xlsx, .xls) ou Bloco de Notas (.txt)** para processamento contábil local.")
 
 # 1. Configuração Fixa do Plano de Contas Padrão na Sidebar
 st.sidebar.header("⚙️ Contas Padrão")
@@ -187,7 +188,6 @@ if st.session_state.mapeamento:
 
 st.markdown("---")
 
-# Modificado accept types para suportar múltiplos formatos contábeis
 arquivo_carregado = st.file_uploader(
     "Selecione um arquivo de extrato para analisar", 
     type=["pdf", "xlsx", "xls", "txt"]
@@ -198,7 +198,6 @@ if arquivo_carregado:
     nome_extensao = os.path.splitext(arquivo_carregado.name)[1].lower()
     
     try:
-        # TRATAMENTO FORMATO 1: PDF NATIVO OU ESCANEADO COM TEXTO
         if nome_extensao == ".pdf":
             with pdfplumber.open(arquivo_carregado) as pdf:
                 for pagina in pdf.pages:
@@ -206,17 +205,14 @@ if arquivo_carregado:
                     if texto_pagina:
                         linhas.extend(texto_pagina.split('\n'))
                         
-        # TRATAMENTO FORMATO 2: PLANILHAS EXCEL (Conversão de células para strings contínuas)
         elif nome_extensao in [".xlsx", ".xls"]:
             df_excel = pd.read_excel(arquivo_carregado, header=None)
-            # Preenche células vazias com espaço e transforma as linhas da tabela em frases legíveis para o pipeline
             df_excel = df_excel.fillna("")
             for index, row in df_excel.iterrows():
                 linha_texto = " ".join([str(val).strip() for val in row.values if str(val).strip()])
                 if linha_texto:
                     linhas.append(linha_texto)
                     
-        # TRATAMENTO FORMATO 3: ARQUIVOS DE TEXTO PLANO OU CSV
         elif nome_extensao == ".txt":
             string_data = arquivo_carregado.read().decode("utf-8", errors="ignore")
             linhas = string_data.split('\n')
@@ -228,7 +224,8 @@ if arquivo_carregado:
     periodos_disponiveis = pre_analisar_meses(linhas)
     
     if periodos_disponiveis:
-        opcoes_selecao = [f"{MESES_NOME[p]} de {p}" for p in periodos_disponiveis]
+        # CORREÇÃO DO ERRO: Acessa o índice da tupla corretamente p[0] para o mês e p[1] para o ano
+        opcoes_selecao = [f"{MESES_NOME[p[0]]} de {p[1]}" for p in periodos_disponiveis]
         
         if len(periodos_disponiveis) > 1:
             st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** no extrato!")
@@ -257,3 +254,6 @@ if arquivo_carregado:
 
             if registros:
                 df = pd.DataFrame(registros)
+                df = df.iloc[::-1].reset_index(drop=True)  # Ordem cronológica crescente
+
+                df['data'] = df['data'].astype(str)
