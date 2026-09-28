@@ -7,7 +7,7 @@ import pdfplumber  # Engine de extração local para PDFs
 
 # Configuração da página do Streamlit
 st.set_page_config(
-    page_title="Conversor Contábil Multi-Meses com Subcontas",
+    page_title="Conversor Contábil Multi-Formato com Subcontas",
     page_icon="📊",
     layout="wide"
 )
@@ -143,8 +143,8 @@ def processar_linha_caixa(linha, conta_banco, conta_fornecedor, conta_cliente, m
     }
 
 # --- PAINEL VISUAL STREAMLIT ---
-st.title("📊 Conversor Contábil de PDFs Direto com Subcontas")
-st.markdown("Arraste os seus arquivos **PDF** de imagem ou escaneados diretamente aqui. O sistema usará o leitor local.")
+st.title("📊 Conversor Contábil Multi-Formato (PDF, Excel, TXT)")
+st.markdown("Arraste extratos bancários em formato **PDF, Excel (.xlsx, .xls) ou Bloco de Notas (.txt)** para processamento contábil local [1].")
 
 # 1. Configuração Fixa do Plano de Contas Padrão na Sidebar
 st.sidebar.header("⚙️ Contas Padrão")
@@ -187,30 +187,51 @@ if st.session_state.mapeamento:
 
 st.markdown("---")
 
+# Modificado accept types para suportar múltiplos formatos contábeis
 arquivo_carregado = st.file_uploader(
-    "Selecione um arquivo de extrato em formato PDF para analisar", 
-    type=["pdf"]
+    "Selecione um arquivo de extrato para analisar", 
+    type=["pdf", "xlsx", "xls", "txt"]
 )
 
 if arquivo_carregado:
     linhas = []
+    nome_extensao = os.path.splitext(arquivo_carregado.name)[1].lower()
+    
     try:
-        with pdfplumber.open(arquivo_carregado) as pdf:
-            for pagina in pdf.pages:
-                texto_pagina = pagina.extract_text()
-                if texto_pagina:
-                    linhas.extend(texto_pagina.split('\n'))
+        # TRATAMENTO FORMATO 1: PDF NATIVO OU ESCANEADO COM TEXTO
+        if nome_extensao == ".pdf":
+            with pdfplumber.open(arquivo_carregado) as pdf:
+                for pagina in pdf.pages:
+                    texto_pagina = pagina.extract_text()
+                    if texto_pagina:
+                        linhas.extend(texto_pagina.split('\n'))
+                        
+        # TRATAMENTO FORMATO 2: PLANILHAS EXCEL (Conversão de células para strings contínuas)
+        elif nome_extensao in [".xlsx", ".xls"]:
+            df_excel = pd.read_excel(arquivo_carregado, header=None)
+            # Preenche células vazias com espaço e transforma as linhas da tabela em frases legíveis para o pipeline
+            df_excel = df_excel.fillna("")
+            for index, row in df_excel.iterrows():
+                linha_texto = " ".join([str(val).strip() for val in row.values if str(val).strip()])
+                if linha_texto:
+                    linhas.append(linha_texto)
+                    
+        # TRATAMENTO FORMATO 3: ARQUIVOS DE TEXTO PLANO OU CSV
+        elif nome_extensao == ".txt":
+            string_data = arquivo_carregado.read().decode("utf-8", errors="ignore")
+            linhas = string_data.split('\n')
+            
     except Exception as e:
-        st.error("Erro ao ler o arquivo PDF. Certifique-se de que não está corrompido.")
+        st.error(f"Erro ao decodificar a estrutura do arquivo {arquivo_carregado.name}: {e}")
         st.stop()
     
     periodos_disponiveis = pre_analisar_meses(linhas)
     
     if periodos_disponiveis:
-        opcoes_selecao = [f"{MESES_NOME[p[0]]} de {p[1]}" for p in periodos_disponiveis]
+        opcoes_selecao = [f"{MESES_NOME[p]} de {p}" for p in periodos_disponiveis]
         
         if len(periodos_disponiveis) > 1:
-            st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** neste PDF!")
+            st.warning(f"⚠️ Atenção: Detectamos lançamentos de **{len(periodos_disponiveis)} meses diferentes** no extrato!")
         
         periodo_escolhido = st.selectbox(
             "📅 Qual mês você deseja converter e exportar agora?",
@@ -236,29 +257,3 @@ if arquivo_carregado:
 
             if registros:
                 df = pd.DataFrame(registros)
-                df = df.iloc[::-1].reset_index(drop=True)  # Ordem cronológica crescente
-
-                df['data'] = df['data'].astype(str)
-                df['conta debito'] = df['conta debito'].astype(str)
-                df['conta crédito'] = df['conta crédito'].astype(str)
-
-                colunas_ordenadas = ['data', 'conta debito', 'conta crédito', 'valor', 'descrição']
-                df = df[colunas_ordenadas]
-
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False)
-
-                st.session_state.resultado = {
-                    "chave": chave_execucao,
-                    "df": df,
-                    "excel": output.getvalue(),
-                }
-            else:
-                st.session_state.resultado = {"chave": chave_execucao, "df": None, "excel": None}
-
-        # Exibe o resultado da conversão de maneira controlada e alinhada
-        resultado = st.session_state.get("resultado")
-        if resultado and resultado["chave"] == chave_execucao:
-            if resultado["df"] is not None:
-                st.markdown(f"### 👀 Prévia das 5 primeiras linhas - Período: `{periodo_escolhido}`")
