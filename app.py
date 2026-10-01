@@ -3,13 +3,6 @@ import re
 import pandas as pd
 import streamlit as st
 
-# Configuração da página do Streamlit
-st.set_page_config(
-    page_title="Conversor Contábil TXT com Subcontas",
-    page_icon="📊",
-    layout="wide"
-)
-
 # Dicionário para conversão amigável de número do mês para nome em português
 MESES_NOME = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
@@ -162,6 +155,7 @@ def gerar_conteudo_txt(registros):
     return "\r\n".join(linhas_txt)
 
 # --- PAINEL VISUAL STREAMLIT ---
+st.page_link("painel.py", label="Voltar ao painel", icon="🏠")
 st.title("📊 Conversor Contábil TXT")
 st.markdown("Arraste extratos bancários em formato **Bloco de Notas (.txt)** para processamento contábil local.")
 
